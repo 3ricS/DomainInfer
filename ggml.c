@@ -14211,6 +14211,14 @@ static void ggml_compute_forward_mul_mat_sparse(
     int *gid = (int *)dst->src[3]->data;
     float *predictor_data = (float *)dst->src[2]->data;
     const size_t predictor_row_size = dst->src[2]->ne[0]*ggml_type_size(GGML_TYPE_F32)/ggml_blck_size(GGML_TYPE_F32);
+#ifdef DI_STATISTICS
+    int16_t *statistics = dst->src[4];
+    size_t statistics_row_size = 0;
+    if (statistics) {
+        statistics_row_size = dst->src[4]->ne[0]*ggml_type_size(GGML_TYPE_I16)/ggml_blck_size(GGML_TYPE_I16);
+    }
+#endif
+
 
     while(true) {
         ir010 = atomic_fetch_add(params->aic, dr0);
@@ -14258,6 +14266,19 @@ static void ggml_compute_forward_mul_mat_sparse(
                         continue;
                     }
                     vec_dot(ne00, &dst_col[ir0], src0_row + ir0 * nb01, src1_col);
+
+#ifdef DI_STATISTICS
+                    // DI: increase counter of neuron
+                    if (statistics) {
+                        int16_t *statistics_row = (int16_t*)((char *)statistics + (i11 + i12*ne11 + i13*ne12*ne11) * statistics_row_size);
+                        int16_t *statistics_neuron = statistics_row[ir0];
+
+                        if (statistics_neuron) {
+                            (*statistics_neuron) += 1;
+                        }
+                    }
+#endif
+
                 }
                 // }
             }

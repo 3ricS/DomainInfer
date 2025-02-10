@@ -1,6 +1,17 @@
 #ifndef LLAMA_H
 #define LLAMA_H
 
+
+
+// This is specific to DomainInfer
+#define DI_STATISTICS
+
+
+
+
+
+
+
 #include "ggml.h"
 #ifdef GGML_USE_CUBLAS
 #include "ggml-cuda.h"

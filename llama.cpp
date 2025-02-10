@@ -398,6 +398,7 @@ enum llm_tensor {
     LLM_TENSOR_MLP_PRED_FC1,
     LLM_TENSOR_MLP_PRED_FC2,
     LLM_TENSOR_FFN_DOWN_T,
+    LLM_TENSOR_DI_STATISTIC,
 };
 
 static std::map<llm_arch, std::map<llm_tensor, std::string> > LLM_TENSOR_NAMES = {
@@ -421,6 +422,7 @@ static std::map<llm_arch, std::map<llm_tensor, std::string> > LLM_TENSOR_NAMES =
             {LLM_TENSOR_FFN_DOWN_T, "blk.%d.ffn_down_t"},
             {LLM_TENSOR_MLP_PRED_FC1, "blk.%d.fc1"},
             {LLM_TENSOR_MLP_PRED_FC2, "blk.%d.fc2"},
+            {LLM_TENSOR_DI_STATISTIC, "blk.%d.di_stat"},
         },
     },
     {
@@ -662,6 +664,7 @@ tensor_offloading_levels get_offloading_level(llm_tensor tensor) {
             return TENSOR_OFFLOAD_FFN_IO;
         case LLM_TENSOR_MLP_PRED_FC1:
         case LLM_TENSOR_MLP_PRED_FC2:
+        case LLM_TENSOR_DI_STATISTIC:
             return TENSOR_OFFLOAD_MLP_PRED;
         default:
             throw std::runtime_error("unknown tensor category");
@@ -1374,6 +1377,10 @@ struct llama_layer {
     struct ggml_tensor *gpu_idx; // index of ffn neurons on GPU
     double gpu_offload_ratio; // ratio of ffn split on GPU ([0, 1])
     struct ggml_tensor *gpu_bucket; // double index from GPU split neuron to original neuron
+
+#ifdef DI_STATISTICS
+    struct ggml_tensor *di_statistics_gate;
+#endif
 };
 
 struct llama_kv_cell {
@@ -3251,6 +3258,12 @@ static void llm_load_sparse_model_tensors(
     ml.calc_sizes(ctx_size, mmapped_size);
     LLAMA_LOG_INFO("%s: ggml ctx size = %7.2f MB\n", __func__, ctx_size/1024.0/1024.0);
 
+#ifdef DI_STATISTICS
+    // DI: add space for additional 64 tensors for statistics
+    constexpr int ntensor_statistics = 64;
+    ctx_size += sizeof(ggml_tensor) * ntensor_statistics;
+#endif
+
     // create the ggml context
     {
         model.buf.resize(ctx_size);
@@ -3337,10 +3350,25 @@ static void llm_load_sparse_model_tensors(
                     layer.mlp_pre_w2 = create_tensor(tn(LLM_TENSOR_MLP_PRED_FC2, "weight", i),
                                                      {GGML_NE_WILDCARD, n_ff});
                     layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff});
+
+#ifdef DI_STATISTICS
+                    // use di_statistics_gate for the gate
+                    int64_t ne[2] = {n_embd, n_ff};
+                    layer.di_statistics_gate = ggml_new_tensor(
+                        ctx,
+                        GGML_TYPE_I16,
+                        2,
+                        ne
+                        );
+#endif
+
                 }
             }
             break;
             case LLM_ARCH_FALCON: {
+                // DI: no support for falcon
+                throw std::runtime_error("unknown architecture");
+
                 model.tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
 
                 // output
@@ -4734,7 +4762,11 @@ static struct ggml_tensor *llm_build_ffn_sparse(
     llm_ffn_op_type type_op,
     llm_ffn_gate_type type_gate,
     double gpu_offload_ratio,
-    const llm_build_cb_short &cb_outer) {
+    const llm_build_cb_short &cb_outer,
+    struct ggml_tensor *di_statistics_gate
+    ) {
+
+
     bool full_gpu = gpu_offload_ratio >= 1.0;
     ggml_tensor *ffn_input = cur;
 
@@ -4785,6 +4817,15 @@ static struct ggml_tensor *llm_build_ffn_sparse(
         ggml_tensor *gate_input = (type_gate == LLM_FFN_PAR || type_gate == LLM_FFN_SYM) ? ffn_input : up_out;
         gate_out = llm_build_sparse_mul_mat(ctx, gate, gate_input, idx, gate_gpu, gpu_index, gpu_bucket, cb_outer,
                                             "gate", full_gpu);
+
+#ifdef DI_STATISTICS
+        if (!di_statistics_gate) {
+            throw std::runtime_error("di_statistics_gate in function llm_build_ffn_sparse is NULL");
+        }
+        gate_out->src[4] = di_statistics_gate;
+#endif
+
+
         if (gate_b) {
             gate_out = ggml_add(ctx, gate_out, gate_b);
             cb(gate_out, "ffn_gate_b");
@@ -5106,6 +5147,8 @@ struct llm_build_context {
                     } else {
                         cbs(cur, "ffn_norm");
                     }
+
+#ifdef DI_STATISTICS
                     cur = llm_build_ffn_sparse(ctx0, cur,
                                                model.layers[il].ffn_up, NULL,
                                                model.layers[il].ffn_gate, NULL,
@@ -5116,7 +5159,22 @@ struct llm_build_context {
                                                model.layers[il].gpu_idx,
                                                model.layers[il].gpu_bucket, model.layers[il].ffn_gate_gpu,
                                                model.layers[il].ffn_down_gpu, model.layers[il].ffn_up_gpu,
-                                               LLM_FFN_RELU, gate_type, model.layers[il].gpu_offload_ratio, cbs);
+                                               LLM_FFN_RELU, gate_type, model.layers[il].gpu_offload_ratio, cbs,
+                                               model.layers[il].di_statistics_gate);
+#else
+                    cur = llm_build_ffn_sparse(ctx0, cur,
+                                               model.layers[il].ffn_up, NULL,
+                                               model.layers[il].ffn_gate, NULL,
+                                               model.layers[il].ffn_down_t, NULL,
+                                               model.layers[il].mlp_pre_w1,
+                                               model.layers[il].mlp_pre_w2,
+                                               ffn_inp, // as for now, llama's pred use the same input as the ffn
+                                               model.layers[il].gpu_idx,
+                                               model.layers[il].gpu_bucket, model.layers[il].ffn_gate_gpu,
+                                               model.layers[il].ffn_down_gpu, model.layers[il].ffn_up_gpu,
+                                               LLM_FFN_RELU, gate_type, model.layers[il].gpu_offload_ratio, cbs,
+                                               NULL);
+#endif
                 } else {
                     // fallback to dense
                     cb(cur, "ffn_norm", il);
@@ -5385,7 +5443,8 @@ struct llm_build_context {
                                            model.layers[il].gpu_bucket,
                                            model.layers[il].ffn_gate_gpu, model.layers[il].ffn_down_gpu,
                                            model.layers[il].ffn_up_gpu,
-                                           LLM_FFN_RELU, LLM_FFN_SEQ, model.layers[il].gpu_offload_ratio, cbs);
+                                           LLM_FFN_RELU, LLM_FFN_SEQ, model.layers[il].gpu_offload_ratio, cbs,
+                                           NULL);
             } else {
                 cb(attn_norm, "attn_norm", il);
                 cur = llm_build_ffn(ctx0, attn_norm, // !! use the attn norm, not the result
