@@ -1379,7 +1379,7 @@ struct llama_layer {
     struct ggml_tensor *gpu_bucket; // double index from GPU split neuron to original neuron
 
 #ifdef DI_STATISTICS
-    struct ggml_tensor *di_statistics_gate;
+    struct ggml_tensor *di_statistics_up_out;
 #endif
 };
 
@@ -1552,6 +1552,39 @@ struct llama_model {
         }
 #endif
     }
+
+#ifdef DI_STATISTICS
+    bool llama_model::get_statistics(int layer_idx, int16_t* statistics) {
+        if (layer_idx < 0 || layer_idx > sizeof(layers)) {
+            LLAMA_LOG_ERROR("statistics layer_idx out of range");
+            return false;
+        }
+
+        ggml_tensor* statistics_tensor = layers[layer_idx].di_statistics_up_out;
+        if (statistics_tensor == nullptr) {
+            LLAMA_LOG_ERROR("statistics tensor is null");
+            return false;
+        }
+        int32_t size = statistics_tensor->ne[0] * statistics_tensor->ne[1];
+        int16_t* data = (int16_t*)statistics_tensor->data;
+        if (!data) {
+            LLAMA_LOG_ERROR("data is null");
+            return false;
+        }
+
+        int j = 0;
+        for (int i = 0; i < size; ++i) {
+            if (data[i] != 0) {
+                statistics[j++] = data[i];
+            }
+            if (j == 100) {
+                return true;
+            }
+        }
+        return true;
+    }
+#endif
+
 };
 
 struct llama_context {
@@ -3352,14 +3385,20 @@ static void llm_load_sparse_model_tensors(
                     layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff});
 
 #ifdef DI_STATISTICS
-                    // use di_statistics_gate for the gate
+                    // DI: use di_statistics_up_out for the gate
                     int64_t ne[2] = {n_embd, n_ff};
-                    layer.di_statistics_gate = ggml_new_tensor(
+                    layer.di_statistics_up_out = ggml_new_tensor(
                         ctx,
                         GGML_TYPE_I16,
                         2,
                         ne
                         );
+                    layer.di_statistics_up_out->data = (uint16_t *) malloc(ggml_nbytes(layer.di_statistics_up_out));
+
+                    int16_t* data = (int16_t*)layer.di_statistics_up_out->data;
+                    if (!data) {
+                        LLAMA_LOG_WARN("tensor is not allocated\n");
+                    }
 #endif
 
                 }
@@ -4807,6 +4846,14 @@ static struct ggml_tensor *llm_build_ffn_sparse(
     // FFN up
     struct ggml_tensor *up_out = llm_build_sparse_mul_mat(ctx, up, ffn_input, idx, up_gpu, gpu_index, gpu_bucket,
                                                           cb_outer, "up", full_gpu);
+
+#ifdef DI_STATISTICS
+    if (!di_statistics_gate) {
+        throw std::runtime_error("di_statistics_up_out in function llm_build_ffn_sparse is NULL");
+    }
+    up_out->src[4] = di_statistics_gate;
+#endif
+
     if (up_b) {
         up_out = ggml_add(ctx, up_out, up_b);
         cb(up_out, "ffn_up_b");
@@ -4817,13 +4864,6 @@ static struct ggml_tensor *llm_build_ffn_sparse(
         ggml_tensor *gate_input = (type_gate == LLM_FFN_PAR || type_gate == LLM_FFN_SYM) ? ffn_input : up_out;
         gate_out = llm_build_sparse_mul_mat(ctx, gate, gate_input, idx, gate_gpu, gpu_index, gpu_bucket, cb_outer,
                                             "gate", full_gpu);
-
-#ifdef DI_STATISTICS
-        if (!di_statistics_gate) {
-            throw std::runtime_error("di_statistics_gate in function llm_build_ffn_sparse is NULL");
-        }
-        gate_out->src[4] = di_statistics_gate;
-#endif
 
 
         if (gate_b) {
@@ -5160,7 +5200,7 @@ struct llm_build_context {
                                                model.layers[il].gpu_bucket, model.layers[il].ffn_gate_gpu,
                                                model.layers[il].ffn_down_gpu, model.layers[il].ffn_up_gpu,
                                                LLM_FFN_RELU, gate_type, model.layers[il].gpu_offload_ratio, cbs,
-                                               model.layers[il].di_statistics_gate);
+                                               model.layers[il].di_statistics_up_out);
 #else
                     cur = llm_build_ffn_sparse(ctx0, cur,
                                                model.layers[il].ffn_up, NULL,

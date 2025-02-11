@@ -1,5 +1,6 @@
 #include "common.h"
 #include "llama.h"
+#include "llama.cpp"
 
 #include <cmath>
 #include <cstdio>
@@ -101,7 +102,6 @@ int main(int argc, char ** argv) {
 
     // llama_decode will output logits only for the last token of the prompt
     batch.logits[batch.n_tokens - 1] = true;
-
     if (llama_decode(ctx, batch) != 0) {
         LOG_TEE("%s: llama_decode() failed\n", __func__);
         return 1;
@@ -113,10 +113,25 @@ int main(int argc, char ** argv) {
     int n_decode = 0;
 
     const auto t_main_start = ggml_time_us();
+    int16_t statistics[100] = {0};
 
     while (n_cur <= n_len) {
         // sample the next token
         {
+#ifdef DI_STATISTICS
+            bool success = model->get_statistics(0, statistics);
+            if (success) {
+                LOG_TEE("Got statistics data\n");
+                for (int i = 0; i < 100; i++) {
+                    LOG_TEE("%i; ", statistics[i]);
+                }
+                LOG_TEE("\n");
+            }
+            else {
+                LOG_TEE("did not got statistics\n");
+            }
+#endif
+
             auto   n_vocab = llama_n_vocab(model);
             auto * logits  = llama_get_logits_ith(ctx, batch.n_tokens - 1);
 
