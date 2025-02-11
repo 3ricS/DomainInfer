@@ -14378,10 +14378,11 @@ static void ggml_compute_forward_mul_mat_sparse(
 #ifdef DI_STATISTICS
                     // DI: increase counter of neuron
                     if (statistics_tensor && statistics_tensor->data) {
-                        int16_t *statistics_row = (int16_t *) (
-                            (char *) statistics_tensor->data + (i11 + i12 * ne11 + i13 * ne12 * ne11) *
-                            statistics_row_size);
-                        int16_t *statistics_neuron = statistics_row[ir0];
+                        int16_t *statistics_neuron = (int16_t *) (
+                            ((char *) statistics_tensor->data) +
+                            (i1 + i2 * ne11 + i3 * ne12 * ne11) * statistics_row_size
+                            + ir0 * sizeof(int16_t)
+                            );
                         if (statistics_neuron) {
                             *statistics_neuron = *statistics_neuron + 1;
                         }
