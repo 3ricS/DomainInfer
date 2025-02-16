@@ -9850,6 +9850,14 @@ static void ggml_compute_forward_mul_mat(
     // attempt to reduce false-sharing (does not seem to make a difference)
     float tmp[16];
 
+#ifdef DI_STATISTICS
+    struct ggml_tensor *statistics_tensor = dst->src[4];
+    size_t statistics_row_size = 0;
+    if (statistics_tensor) {
+        statistics_row_size = statistics_tensor->ne[0] * ggml_type_size(GGML_TYPE_I16) / ggml_blck_size(GGML_TYPE_I16);
+    }
+#endif
+
     for (int64_t iir1 = ir110; iir1 < ir111; iir1 += blck_1) {
         for (int64_t iir0 = ir010; iir0 < ir011; iir0 += blck_0) {
             for (int64_t ir1 = iir1; ir1 < iir1 + blck_1 && ir1 < ir111; ++ir1) {
@@ -9886,6 +9894,20 @@ static void ggml_compute_forward_mul_mat(
                     vec_dot(ne00, &tmp[ir0 - iir0], src0_row + ir0 * nb01, src1_col);
                 }
                 memcpy(&dst_col[iir0], tmp, (MIN(iir0 + blck_0, ir011) - iir0) * sizeof(float));
+
+#ifdef DI_STATISTICS
+                // DI: increase counter of only if neuron is activated (value > 0)
+                if (dst_col[iir0] > 0.0 && statistics_tensor && statistics_tensor->data) {
+                    int16_t *statistics_neuron = (int16_t *) (
+                        ((char *) statistics_tensor->data) +
+                        (i1 + i2 * ne11 + i3 * ne12 * ne11) * statistics_row_size
+                        + iir0 * sizeof(int16_t)
+                    );
+                    if (statistics_neuron) {
+                        *statistics_neuron = *statistics_neuron + 1;
+                    }
+                }
+#endif
             }
         }
     }
@@ -14385,10 +14407,6 @@ static void ggml_compute_forward_mul_mat_sparse(
                             );
                         if (statistics_neuron) {
                             *statistics_neuron = *statistics_neuron + 1;
-                        }
-                        else {
-                            int16_t* data = (int16_t*)(statistics_tensor->data);
-                            *data = *data + 1;
                         }
                     }
 #endif

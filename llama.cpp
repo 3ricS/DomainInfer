@@ -1379,7 +1379,7 @@ struct llama_layer {
     struct ggml_tensor *gpu_bucket; // double index from GPU split neuron to original neuron
 
 #ifdef DI_STATISTICS
-    struct ggml_tensor *di_statistics_up_out;
+    struct ggml_tensor *di_statistics;
 #endif
 };
 
@@ -1554,13 +1554,13 @@ struct llama_model {
     }
 
 #ifdef DI_STATISTICS
-    bool llama_model::get_statistics(int layer_idx, int16_t* statistics) {
+    bool llama_model::get_statistics(int layer_idx, int16_t* statistics, int16_t array_length) {
         if (layer_idx < 0 || layer_idx > sizeof(layers)) {
             LLAMA_LOG_ERROR("statistics layer_idx out of range");
             return false;
         }
 
-        ggml_tensor* statistics_tensor = layers[layer_idx].di_statistics_up_out;
+        ggml_tensor* statistics_tensor = layers[layer_idx].di_statistics;
         if (statistics_tensor == nullptr) {
             LLAMA_LOG_ERROR("statistics tensor is null");
             return false;
@@ -1572,16 +1572,24 @@ struct llama_model {
             return false;
         }
 
-        int j = 0;
-        for (int i = 0; i < size; ++i) {
-            if (data[i] != 0) {
-                statistics[j++] = data[i];
-            }
-            if (j == 100) {
-                return true;
-            }
+        for (int i = 0; i < size && i < array_length; ++i) {
+            statistics[i] = data[i];
         }
         return true;
+    }
+
+    int16_t llama_model::get_statistics_length(int layer_idx) {
+        if (layer_idx < 0 || layer_idx > sizeof(layers)) {
+            LLAMA_LOG_ERROR("statistics layer_idx out of range");
+            return false;
+        }
+
+        ggml_tensor* statistics_tensor = layers[layer_idx].di_statistics;
+        if (statistics_tensor == nullptr) {
+            LLAMA_LOG_ERROR("statistics tensor is null");
+            return false;
+        }
+        return statistics_tensor->ne[0] * statistics_tensor->ne[1];
     }
 #endif
 
@@ -2162,8 +2170,10 @@ struct llama_model_loader {
 
     void done_getting_tensors() const {
         if (n_created != n_tensors) {
+#ifndef DI_STATISTICS
             throw std::runtime_error(format("%s: wrong number of tensors; expected %d, got %d", __func__, n_tensors,
                                             n_created));
+#endif
         }
     }
 
@@ -3385,19 +3395,22 @@ static void llm_load_sparse_model_tensors(
                     layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), {n_embd, n_ff});
 
 #ifdef DI_STATISTICS
-                    // DI: use di_statistics_up_out for the gate
+                    // DI: use di_statistics for the gate
                     int64_t ne[2] = {n_embd, n_ff};
-                    layer.di_statistics_up_out = ggml_new_tensor(
+                    layer.di_statistics = ggml_new_tensor(
                         ctx,
                         GGML_TYPE_I16,
                         2,
                         ne
                         );
-                    layer.di_statistics_up_out->data = (uint16_t *) malloc(ggml_nbytes(layer.di_statistics_up_out));
+                    layer.di_statistics->data = (uint16_t *) malloc(ggml_nbytes(layer.di_statistics));
 
-                    int16_t* data = (int16_t*)layer.di_statistics_up_out->data;
+                    int16_t* data = (int16_t*)layer.di_statistics->data;
                     if (!data) {
                         LLAMA_LOG_WARN("tensor is not allocated\n");
+                    }
+                    else {
+                        LLAMA_LOG_WARN("Allocated tensor for layer %d\n", i);
                     }
 #endif
 
@@ -3543,6 +3556,12 @@ static void llm_load_tensors(
 
     ml.calc_sizes(ctx_size, mmapped_size);
 
+#ifdef DI_STATISTICS
+    // DI: add space for additional 64 tensors for statistics
+    constexpr int ntensor_statistics = 64;
+    ctx_size += sizeof(ggml_tensor) * ntensor_statistics;
+#endif
+
     LLAMA_LOG_INFO("%s: ggml ctx size = %7.2f MB\n", __func__, ctx_size/1024.0/1024.0);
 
     // create the ggml context
@@ -3639,11 +3658,15 @@ static void llm_load_tensors(
                 model.layers.resize(n_layer);
 
                 for (uint32_t i = 0; i < n_layer; ++i) {
-                    const ggml_backend_type backend = int(i) < i_gpu_start ? GGML_BACKEND_CPU : llama_backend_offload;
+                    ggml_backend_type backend = int(i) < i_gpu_start ? GGML_BACKEND_CPU : llama_backend_offload;
                     // NOLINT
-                    const ggml_backend_type backend_split = int(i) < i_gpu_start
+                    ggml_backend_type backend_split = int(i) < i_gpu_start
                                                                 ? GGML_BACKEND_CPU
                                                                 : llama_backend_offload_split; // NOLINT
+#ifdef DI_STATISTICS
+                    backend = GGML_BACKEND_CPU;
+                    backend_split = GGML_BACKEND_CPU;
+#endif
 
                     auto &layer = model.layers[i];
 
@@ -3673,6 +3696,25 @@ static void llm_load_tensors(
                                 ggml_nbytes(layer.wv) + ggml_nbytes(layer.wo) + ggml_nbytes(layer.ffn_norm) +
                                 ggml_nbytes(layer.ffn_gate) + ggml_nbytes(layer.ffn_down) + ggml_nbytes(layer.ffn_up);
                     }
+#ifdef DI_STATISTICS
+                    // DI: use di_statistics for the gate
+                    int64_t ne[2] = {n_embd, n_ff};
+                    layer.di_statistics = ggml_new_tensor(
+                        ctx,
+                        GGML_TYPE_I16,
+                        2,
+                        ne
+                        );
+                    layer.di_statistics->data = (uint16_t *) malloc(ggml_nbytes(layer.di_statistics));
+
+                    int16_t* data = (int16_t*)layer.di_statistics->data;
+                    if (!data) {
+                        LLAMA_LOG_WARN("tensor is not allocated\n");
+                    }
+                    else {
+                        LLAMA_LOG_WARN("Allocated statistics tensor for layer %d\n", i);
+                    }
+#endif
                 }
             }
             break;
@@ -4316,9 +4358,17 @@ static void llm_load_tensors(
     }
 
     // populate `tensors_by_name`
+    LLAMA_LOG_WARN("Populate tensors by name with %d tensors\n", ml.n_tensors);
     for (int i = 0; i < ml.n_tensors; ++i) {
+        LLAMA_LOG_WARN("Tensor %d %s, ", i, ml.get_tensor_name(i));
         struct ggml_tensor *cur = ggml_get_tensor(ctx, ml.get_tensor_name(i));
-        model.tensors_by_name.emplace_back(ggml_get_name(cur), cur);
+        if (ggml_get_name(cur)) {
+            LLAMA_LOG_WARN("Got tensor %d\n", i);
+            model.tensors_by_name.emplace_back(ggml_get_name(cur), cur);
+        }
+        else {
+            LLAMA_LOG_WARN("Skip tensor %d\n", i);
+        }
     }
 
     (void) tensor_split;
@@ -4328,7 +4378,9 @@ static void llm_load_tensors(
     }
 #endif
 
+    LLAMA_LOG_WARN("Wants to load all data\n");
     ml.load_all_data(ctx, progress_callback, progress_callback_user_data, use_mlock ? &model.mlock_mmap : NULL);
+    LLAMA_LOG_WARN("After loaded all data\n");
 
     if (progress_callback) {
         progress_callback(1.0f, progress_callback_user_data);
@@ -4345,6 +4397,11 @@ static bool llama_model_load(const std::string &fname, llama_model &model, const
                              const llama_context_params *cparams) {
     try {
         llama_model_loader ml(fname, params.use_mmap);
+
+#ifdef DI_STATISTICS
+        // DI: use dense inference when gathering statistics
+        ml.sparse_deriv = GGML_DENSE_INFERENCE;
+#endif
 
         if (ml.sparse_deriv == GGML_SPARSE_INFERENCE) {
             LLAMA_LOG_INFO("%s: PowerInfer model loaded. Sparse inference will be used.\n", __func__);
@@ -4377,12 +4434,14 @@ static bool llama_model_load(const std::string &fname, llama_model &model, const
 #if defined GGML_USE_CUBLAS
             llama_set_vram_budget(params.vram_budget_gb, params.main_gpu);
 #endif
+            LLAMA_LOG_WARN("Load sparse tensors!\n");
             llm_load_sparse_model_tensors(
                 ml, model, cparams, params.main_gpu, vram_budget_bytes, params.reset_gpu_index,
                 params.disable_gpu_index,
                 params.use_mlock, params.progress_callback, params.progress_callback_user_data
             );
         } else {
+            LLAMA_LOG_WARN("Load tensors!\n");
             llm_load_tensors(
                 ml, model, params.n_gpu_layers, params.main_gpu, params.tensor_split, params.use_mlock,
                 params.progress_callback, params.progress_callback_user_data
@@ -4593,7 +4652,9 @@ static struct ggml_tensor *llm_build_ffn(
     llm_ffn_op_type type_op,
     llm_ffn_gate_type type_gate,
     const llm_build_cb &cb,
-    int il) {
+    int il,
+    struct ggml_tensor *di_statistics)
+{
     struct ggml_tensor *tmp = ggml_mul_mat(ctx, up, cur);
     cb(tmp, "ffn_up", il);
 
@@ -4655,6 +4716,11 @@ static struct ggml_tensor *llm_build_ffn(
         return cur;
     };
 
+#ifdef DI_STATISTICS
+    if (di_statistics) {
+        cur->src[4] = di_statistics;
+    }
+#endif
     cur = act_fn(cur);
     if (type_gate == LLM_FFN_SYM) {
         // In this case, the output of up is also activated
@@ -4849,7 +4915,7 @@ static struct ggml_tensor *llm_build_ffn_sparse(
 
 #ifdef DI_STATISTICS
     if (!di_statistics_gate) {
-        throw std::runtime_error("di_statistics_up_out in function llm_build_ffn_sparse is NULL");
+        throw std::runtime_error("di_statistics in function llm_build_ffn_sparse is NULL");
     }
     up_out->src[4] = di_statistics_gate;
 #endif
@@ -5188,20 +5254,19 @@ struct llm_build_context {
                         cbs(cur, "ffn_norm");
                     }
 
-#ifdef DI_STATISTICS
-                    cur = llm_build_ffn_sparse(ctx0, cur,
-                                               model.layers[il].ffn_up, NULL,
-                                               model.layers[il].ffn_gate, NULL,
-                                               model.layers[il].ffn_down_t, NULL,
-                                               model.layers[il].mlp_pre_w1,
-                                               model.layers[il].mlp_pre_w2,
-                                               ffn_inp, // as for now, llama's pred use the same input as the ffn
-                                               model.layers[il].gpu_idx,
-                                               model.layers[il].gpu_bucket, model.layers[il].ffn_gate_gpu,
-                                               model.layers[il].ffn_down_gpu, model.layers[il].ffn_up_gpu,
-                                               LLM_FFN_RELU, gate_type, model.layers[il].gpu_offload_ratio, cbs,
-                                               model.layers[il].di_statistics_up_out);
-#else
+                    // do not collect statistics when using PowerInfer
+                    // cur = llm_build_ffn_sparse(ctx0, cur,
+                    //                            model.layers[il].ffn_up, NULL,
+                    //                            model.layers[il].ffn_gate, NULL,
+                    //                            model.layers[il].ffn_down_t, NULL,
+                    //                            model.layers[il].mlp_pre_w1,
+                    //                            model.layers[il].mlp_pre_w2,
+                    //                            ffn_inp, // as for now, llama's pred use the same input as the ffn
+                    //                            model.layers[il].gpu_idx,
+                    //                            model.layers[il].gpu_bucket, model.layers[il].ffn_gate_gpu,
+                    //                            model.layers[il].ffn_down_gpu, model.layers[il].ffn_up_gpu,
+                    //                            LLM_FFN_RELU, gate_type, model.layers[il].gpu_offload_ratio, cbs,
+                    //                            model.layers[il].di_statistics);
                     cur = llm_build_ffn_sparse(ctx0, cur,
                                                model.layers[il].ffn_up, NULL,
                                                model.layers[il].ffn_gate, NULL,
@@ -5214,16 +5279,24 @@ struct llm_build_context {
                                                model.layers[il].ffn_down_gpu, model.layers[il].ffn_up_gpu,
                                                LLM_FFN_RELU, gate_type, model.layers[il].gpu_offload_ratio, cbs,
                                                NULL);
-#endif
                 } else {
                     // fallback to dense
                     cb(cur, "ffn_norm", il);
                     llm_ffn_op_type act_type = model.arch == LLM_ARCH_BAMBOO ? LLM_FFN_RELU : LLM_FFN_SILU;
+#ifdef DI_STATISTICS
                     cur = llm_build_ffn(ctx0, cur,
                                         model.layers[il].ffn_up, NULL,
                                         model.layers[il].ffn_gate, NULL,
                                         model.layers[il].ffn_down, NULL,
-                                        act_type, gate_type, cb, il);
+                                        act_type, gate_type, cb, il,
+                                        model.layers[il].di_statistics);
+#else
+                    cur = llm_build_ffn(ctx0, cur,
+                                        model.layers[il].ffn_up, NULL,
+                                        model.layers[il].ffn_gate, NULL,
+                                        model.layers[il].ffn_down, NULL,
+                                        act_type, gate_type, cb, il, NULL);
+#endif
                 }
             }
 
@@ -5344,7 +5417,7 @@ struct llm_build_context {
                                     model.layers[il].ffn_up, NULL,
                                     model.layers[il].ffn_gate, NULL,
                                     model.layers[il].ffn_down, NULL,
-                                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
+                                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il, NULL);
                 cb(cur, "ffn_out", il);
             }
 
@@ -5491,7 +5564,7 @@ struct llm_build_context {
                                     model.layers[il].ffn_up, NULL,
                                     NULL, NULL,
                                     model.layers[il].ffn_down_t, NULL,
-                                    LLM_FFN_RELU, LLM_FFN_SEQ, cb, il);
+                                    LLM_FFN_RELU, LLM_FFN_SEQ, cb, il, NULL);
                 cb(cur, "ffn_out", il);
             }
 
@@ -5603,7 +5676,7 @@ struct llm_build_context {
                                     model.layers[il].ffn_up, model.layers[il].ffn_up_b,
                                     NULL, NULL,
                                     model.layers[il].ffn_down, model.layers[il].ffn_down_b,
-                                    LLM_FFN_GELU, LLM_FFN_SEQ, cb, il);
+                                    LLM_FFN_GELU, LLM_FFN_SEQ, cb, il, NULL);
                 cb(cur, "ffn_out", il);
             }
 
@@ -5810,7 +5883,7 @@ struct llm_build_context {
                                     model.layers[il].ffn_up, model.layers[il].ffn_up_b,
                                     NULL, NULL,
                                     model.layers[il].ffn_down, model.layers[il].ffn_down_b,
-                                    LLM_FFN_RELU_SQR, LLM_FFN_SEQ, cb, il);
+                                    LLM_FFN_RELU_SQR, LLM_FFN_SEQ, cb, il, NULL);
                 cb(cur, "ffn_out", il);
             }
 
@@ -5900,7 +5973,7 @@ struct llm_build_context {
                                     model.layers[il].ffn_up, NULL,
                                     model.layers[il].ffn_gate, NULL,
                                     model.layers[il].ffn_down, NULL,
-                                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
+                                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il, NULL);
                 cb(cur, "ffn_out", il);
             }
 
@@ -6002,7 +6075,7 @@ struct llm_build_context {
                                     model.layers[il].ffn_up, model.layers[il].ffn_up_b,
                                     NULL, NULL,
                                     model.layers[il].ffn_down, model.layers[il].ffn_down_b,
-                                    LLM_FFN_GELU, LLM_FFN_SEQ, cb, il);
+                                    LLM_FFN_GELU, LLM_FFN_SEQ, cb, il, NULL);
                 cb(cur, "ffn_out", il);
             }
 
@@ -6099,7 +6172,7 @@ struct llm_build_context {
                                     model.layers[il].ffn_up, NULL,
                                     NULL, NULL,
                                     model.layers[il].ffn_down, NULL,
-                                    LLM_FFN_GELU, LLM_FFN_SEQ, cb, il);
+                                    LLM_FFN_GELU, LLM_FFN_SEQ, cb, il, NULL);
                 cb(cur, "ffn_out", il);
             }
 
@@ -6270,7 +6343,7 @@ struct llm_build_context {
                                     model.layers[il].ffn_up, NULL,
                                     model.layers[il].ffn_gate, NULL,
                                     model.layers[il].ffn_down, NULL,
-                                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
+                                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il, NULL);
                 cb(cur, "ffn_out", il);
             }
 

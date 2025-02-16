@@ -1190,7 +1190,7 @@ def do_dump_model(model_plus: ModelPlus) -> None:
 
 def main(args_in: list[str] | None = None) -> None:
     output_choices = ["f32", "f16"]
-    if np.uint32(1) == np.uint32(1).newbyteorder("<"):
+    if np.uint32(1) == np.uint32(1).view(np.uint32(1).dtype.newbyteorder("<")):
         # We currently only support Q8_0 output on little endian systems.
         output_choices.append("q8_0")
     parser = argparse.ArgumentParser(description="Convert a LLaMa model to a GGML compatible file")
@@ -1230,9 +1230,10 @@ def main(args_in: list[str] | None = None) -> None:
     if not args.vocab_only:
         model_plus = load_some_model(args.model)
         params = Params.load(model_plus)
-        mlp_predictor_plus = load_predictor_model(args.sparse_predictor)
-        params.predictor_params = PredictorParams.load(mlp_predictor_plus)
-        model_plus = merge_multifile_models([model_plus, mlp_predictor_plus])
+        # DI: comment next 3 lines if predictor should be excluded
+        # mlp_predictor_plus = load_predictor_model(args.sparse_predictor)
+        # params.predictor_params = PredictorParams.load(mlp_predictor_plus)
+        # model_plus = merge_multifile_models([model_plus, mlp_predictor_plus])
     else:
         model_plus = ModelPlus(model = {}, paths = [args.model / 'dummy'], format = 'none', vocab = None)
         params = Params.load(model_plus)
@@ -1287,7 +1288,8 @@ def main(args_in: list[str] | None = None) -> None:
 
     model   = model_plus.model
     model   = convert_model_names(model, params)
-    model   = postprocess_transpose(model)
+    # DI: comment next line if predictor should be excluded
+    # model   = postprocess_transpose(model)
     ftype   = pick_output_type(model, args.outtype)
     model   = convert_to_output_type(model, ftype)
     outfile = args.outfile or default_outfile(model_plus.paths, ftype)
