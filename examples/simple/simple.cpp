@@ -9,6 +9,39 @@
 #include <iostream>
 #include <fstream>
 
+
+void write_statistics_to_file(llama_model* model, std::string prompt) {
+    int n_layer = model->hparams.n_layer;
+    std::vector<int> statistics_dimensions = model->get_statistics_dimensions(0);
+
+    std::string file_string;
+    file_string += "prompt: " + prompt + "\n";
+    file_string += "layers: " + std::to_string(n_layer) + "\n";
+    file_string += "statistics size: [" + std::to_string(statistics_dimensions[0]) + ", " + std::to_string(statistics_dimensions[1]) + "]\n";
+
+
+    for (int layer = 0; layer < n_layer; layer++) {
+        LLAMA_LOG_WARN("Write layer %d\n", layer);
+        std::vector<int> statistics = model->get_statistics(layer);
+
+        file_string += std::to_string(layer) + ": ";
+        for (int i = 0; i < statistics.size(); i++) {
+            if (statistics[i] > 0) {
+                file_string += std::to_string(statistics[i]) + ",";
+            } else {
+                file_string += ",";
+            }
+        }
+        file_string += "\n\n";
+    }
+
+    std::string filename = prompt.substr(0, 10) + ".statistics";
+    std::ofstream file("statistics/" + filename);
+    file << file_string;
+    file.close();
+    LLAMA_LOG_INFO("Wrote statistics to %s\n", filename.c_str());
+}
+
 int main(int argc, char **argv) {
     gpt_params params;
 
@@ -129,24 +162,18 @@ int main(int argc, char **argv) {
         int n_decode = 0;
 
         const auto t_main_start = ggml_time_us();
-        const int16_t statistics_length = 5000;
-        int16_t statistics[statistics_length] = {0};
 
         while (n_cur <= n_len) {
             // sample the next token
             {
-#ifdef DI_STATISTICS
-                bool success = model->get_statistics(0, statistics, statistics_length);
-                if (success) {
-                    LOG_TEE("Statistics data:\n");
-                    for (int i = 0; i < 500; i++) {
-                        LOG_TEE("%i; ", statistics[i]);
-                    }
-                    LOG_TEE("\n");
-                } else {
-                    LOG_TEE("did not got statistics\n");
-                }
-#endif
+// #ifdef DI_STATISTICS
+//                 std::vector<int> statistics = model->get_statistics(10);
+//                 LOG_TEE("Statistics data:\n");
+//                 for (int i = 0; i < 500; i++) {
+//                     LOG_TEE("%i; ", statistics[i]);
+//                 }
+//                 LOG_TEE("\n");
+// #endif
 
                 auto n_vocab = llama_n_vocab(model);
                 auto *logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
@@ -206,6 +233,11 @@ int main(int argc, char **argv) {
         llama_batch_free(batch);
 
         llama_free(ctx);
+
+#ifdef DI_STATISTICS
+        write_statistics_to_file(model, params.prompt);
+        model->reset_statistics();
+#endif
     }
     llama_free_model(model);
 

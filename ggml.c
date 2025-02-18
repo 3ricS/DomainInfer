@@ -9897,14 +9897,16 @@ static void ggml_compute_forward_mul_mat(
 
 #ifdef DI_STATISTICS
                 // DI: increase counter of only if neuron is activated (value > 0)
-                if (dst_col[iir0] > 0.0 && statistics_tensor && statistics_tensor->data) {
-                    int16_t *statistics_neuron = (int16_t *) (
-                        ((char *) statistics_tensor->data) +
-                        (i1 + i2 * ne11 + i3 * ne12 * ne11) * statistics_row_size
-                        + iir0 * sizeof(int16_t)
-                    );
-                    if (statistics_neuron) {
-                        *statistics_neuron = *statistics_neuron + 1;
+                for (int ir0 = iir0; ir0 < MIN(iir0 + blck_0, ir011); ir0++) {
+                    if (dst_col[ir0] > 0.0 && statistics_tensor && statistics_tensor->data) {
+                        int16_t *statistics_neuron = (int16_t *) (
+                            (char *) statistics_tensor->data +
+                            (i1 + i2 * ne11 + i3 * ne12 * ne11) * statistics_row_size
+                            + ir0 * sizeof(int16_t)
+                        );
+                        if (statistics_neuron) {
+                            *statistics_neuron = *statistics_neuron + 1;
+                        }
                     }
                 }
 #endif
@@ -14401,7 +14403,7 @@ static void ggml_compute_forward_mul_mat_sparse(
                     // DI: increase counter of neuron
                     if (statistics_tensor && statistics_tensor->data) {
                         int16_t *statistics_neuron = (int16_t *) (
-                            ((char *) statistics_tensor->data) +
+                            (char *) statistics_tensor->data +
                             (i1 + i2 * ne11 + i3 * ne12 * ne11) * statistics_row_size
                             + ir0 * sizeof(int16_t)
                             );

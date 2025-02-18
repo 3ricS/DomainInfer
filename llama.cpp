@@ -1554,42 +1554,52 @@ struct llama_model {
     }
 
 #ifdef DI_STATISTICS
-    bool llama_model::get_statistics(int layer_idx, int16_t* statistics, int16_t array_length) {
-        if (layer_idx < 0 || layer_idx > sizeof(layers)) {
-            LLAMA_LOG_ERROR("statistics layer_idx out of range");
-            return false;
-        }
-
-        ggml_tensor* statistics_tensor = layers[layer_idx].di_statistics;
-        if (statistics_tensor == nullptr) {
-            LLAMA_LOG_ERROR("statistics tensor is null");
-            return false;
-        }
+    std::vector<int> llama_model::get_statistics(int layer_idx) {
+        ggml_tensor* statistics_tensor = get_statistics_tensor(layer_idx);
         int32_t size = statistics_tensor->ne[0] * statistics_tensor->ne[1];
         int16_t* data = (int16_t*)statistics_tensor->data;
         if (!data) {
             LLAMA_LOG_ERROR("data is null");
-            return false;
+            return std::vector<int>();
         }
 
-        for (int i = 0; i < size && i < array_length; ++i) {
+        std::vector<int> statistics(size, 0);
+
+        for (int i = 0; i < size; ++i) {
             statistics[i] = data[i];
         }
-        return true;
+        return statistics;
+    }
+
+    void llama_model::reset_statistics() {
+        for (int i = 0; i < layers.size(); i++) {
+            free(layers[i].di_statistics->data);
+            layers[i].di_statistics->data = (uint16_t *) malloc(ggml_nbytes(layers[i].di_statistics));
+        }
     }
 
     int16_t llama_model::get_statistics_length(int layer_idx) {
-        if (layer_idx < 0 || layer_idx > sizeof(layers)) {
+        ggml_tensor* statistics_tensor = get_statistics_tensor(layer_idx);
+        return statistics_tensor->ne[0] * statistics_tensor->ne[1];
+    }
+
+    std::vector<int> llama_model::get_statistics_dimensions(int layer_idx) {
+        ggml_tensor* statistics_tensor = get_statistics_tensor(layer_idx);
+        return {static_cast<int>(statistics_tensor->ne[0]), static_cast<int>(statistics_tensor->ne[1])};
+    }
+
+    ggml_tensor* get_statistics_tensor(int layer_idx) {
+        if (layer_idx < 0 || layer_idx > hparams.n_layer) {
             LLAMA_LOG_ERROR("statistics layer_idx out of range");
-            return false;
+            return NULL;
         }
 
         ggml_tensor* statistics_tensor = layers[layer_idx].di_statistics;
         if (statistics_tensor == nullptr) {
             LLAMA_LOG_ERROR("statistics tensor is null");
-            return false;
+            return NULL;
         }
-        return statistics_tensor->ne[0] * statistics_tensor->ne[1];
+        return statistics_tensor;
     }
 #endif
 
@@ -4380,7 +4390,7 @@ static void llm_load_tensors(
 
     LLAMA_LOG_WARN("Wants to load all data\n");
     ml.load_all_data(ctx, progress_callback, progress_callback_user_data, use_mlock ? &model.mlock_mmap : NULL);
-    LLAMA_LOG_WARN("After loaded all data\n");
+    LLAMA_LOG_WARN("Loaded all data\n");
 
     if (progress_callback) {
         progress_callback(1.0f, progress_callback_user_data);
