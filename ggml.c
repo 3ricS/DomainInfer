@@ -8942,10 +8942,27 @@ static void ggml_compute_forward_relu_f32(
     assert(dst->nb[0] == sizeof(float));
     assert(src0->nb[0] == sizeof(float));
 
+#ifdef DI_STATISTICS
+    struct ggml_tensor* statistics_tensor = dst->src[4];
+#endif
+
     for (int i = 0; i < n; i++) {
         ggml_vec_relu_f32(nc,
                           (float *) ((char *) dst->data + i * (dst->nb[1])),
                           (float *) ((char *) src0->data + i * (src0->nb[1])));
+
+#ifdef DI_STATISTICS
+        if (!(statistics_tensor && statistics_tensor->data)) {
+            continue;
+        }
+        for (int j = 0; j < nc; j++) {
+            uint16_t* statistics_data = (uint16_t*) ((char*) statistics_tensor->data + i * statistics_tensor->nb[1] + j * statistics_tensor->nb[0]);
+            float* src_data = (float *) ((char *) src0->data + i * (src0->nb[1]) + j * src0->nb[0]);
+            if (*src_data > 0.f) {
+                *statistics_data = *statistics_data + 1;
+            }
+        }
+#endif
     }
 }
 
@@ -9114,6 +9131,20 @@ static void ggml_compute_forward_silu_f32(
         ggml_vec_silu_f32(nc,
                           (float *) ((char *) dst->data + i1 * (dst->nb[1])),
                           (float *) ((char *) src0->data + i1 * (src0->nb[1])));
+
+#ifdef DI_STATISTICS
+        struct ggml_tensor* statistics_tensor = dst->src[4];
+        if (!(statistics_tensor && statistics_tensor->data)) {
+            continue;
+        }
+        for (int j = 0; j < nc; j++) {
+            uint16_t* statistics_data = (uint16_t*) ((char*) statistics_tensor->data + i1 * statistics_tensor->nb[1] + j * statistics_tensor->nb[0]);
+            float* src_data = (float *) ((char *) src0->data + i1 * (src0->nb[1]) + j * src0->nb[0]);
+            if (*src_data > 0.f) {
+                *statistics_data = *statistics_data + 1;
+            }
+        }
+#endif
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
@@ -14401,16 +14432,16 @@ static void ggml_compute_forward_mul_mat_sparse(
 
 #ifdef DI_STATISTICS
                     // DI: increase counter of neuron
-                    if (statistics_tensor && statistics_tensor->data) {
-                        int16_t *statistics_neuron = (int16_t *) (
-                            (char *) statistics_tensor->data +
-                            (i1 + i2 * ne11 + i3 * ne12 * ne11) * statistics_row_size
-                            + ir0 * sizeof(int16_t)
-                            );
-                        if (statistics_neuron) {
-                            *statistics_neuron = *statistics_neuron + 1;
-                        }
-                    }
+                    // if (statistics_tensor && statistics_tensor->data) {
+                    //     int16_t *statistics_neuron = (int16_t *) (
+                    //         (char *) statistics_tensor->data +
+                    //         (i1 + i2 * ne11 + i3 * ne12 * ne11) * statistics_row_size
+                    //         + ir0 * sizeof(int16_t)
+                    //         );
+                    //     if (statistics_neuron) {
+                    //         *statistics_neuron = *statistics_neuron + 1;
+                    //     }
+                    // }
 #endif
                 }
                 // }

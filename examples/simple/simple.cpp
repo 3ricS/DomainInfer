@@ -26,7 +26,8 @@ void write_statistics_to_file(llama_model* model, std::string prompt) {
 
         file_string += std::to_string(layer) + ": ";
         bool previous_was_zero = false;
-        int zero_counter = 0;
+        long zero_counter = 0;
+        LLAMA_LOG_WARN("Writing statistics for layer %d with size %d\n", layer, statistics.size());
         for (int i = 0; i < statistics.size(); i++) {
             if (statistics[i] > 0) {
                 if (previous_was_zero && zero_counter > 3) {
@@ -47,6 +48,15 @@ void write_statistics_to_file(llama_model* model, std::string prompt) {
                 zero_counter++;
             }
         }
+        if (previous_was_zero && zero_counter > 3) {
+            file_string += "(" + std::to_string(zero_counter) + "),";
+        }
+        else if (previous_was_zero) {
+            for (int i = 0; i < zero_counter; i++) {
+                file_string += ",";
+            }
+        }
+
         file_string += "\n\n";
     }
 
@@ -178,18 +188,12 @@ int main(int argc, char **argv) {
 
         const auto t_main_start = ggml_time_us();
 
+#ifdef DI_STATISTICS
+        model->reset_statistics();
+#endif
         while (n_cur <= n_len) {
             // sample the next token
             {
-// #ifdef DI_STATISTICS
-//                 std::vector<int> statistics = model->get_statistics(10);
-//                 LOG_TEE("Statistics data:\n");
-//                 for (int i = 0; i < 500; i++) {
-//                     LOG_TEE("%i; ", statistics[i]);
-//                 }
-//                 LOG_TEE("\n");
-// #endif
-
                 auto n_vocab = llama_n_vocab(model);
                 auto *logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
 

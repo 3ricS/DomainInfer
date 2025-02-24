@@ -1557,7 +1557,7 @@ struct llama_model {
     std::vector<int> llama_model::get_statistics(int layer_idx) {
         ggml_tensor* statistics_tensor = get_statistics_tensor(layer_idx);
         int32_t size = statistics_tensor->ne[0] * statistics_tensor->ne[1];
-        int16_t* data = (int16_t*)statistics_tensor->data;
+        uint16_t* data = (uint16_t*)statistics_tensor->data;
         if (!data) {
             LLAMA_LOG_ERROR("data is null");
             return std::vector<int>();
@@ -1573,8 +1573,7 @@ struct llama_model {
 
     void llama_model::reset_statistics() {
         for (int i = 0; i < layers.size(); i++) {
-            free(layers[i].di_statistics->data);
-            layers[i].di_statistics->data = (uint16_t *) malloc(ggml_nbytes(layers[i].di_statistics));
+            memset(layers[i].di_statistics->data, 0, ggml_nbytes(layers[i].di_statistics));
         }
     }
 
@@ -3406,22 +3405,15 @@ static void llm_load_sparse_model_tensors(
 
 #ifdef DI_STATISTICS
                     // DI: use di_statistics for the gate
-                    int64_t ne[2] = {n_embd, n_ff};
+                    int64_t ne[1] = {n_ff};
                     layer.di_statistics = ggml_new_tensor(
                         ctx,
                         GGML_TYPE_I16,
-                        2,
+                        1,
                         ne
                         );
                     layer.di_statistics->data = (uint16_t *) malloc(ggml_nbytes(layer.di_statistics));
-
-                    int16_t* data = (int16_t*)layer.di_statistics->data;
-                    if (!data) {
-                        LLAMA_LOG_WARN("tensor is not allocated\n");
-                    }
-                    else {
-                        LLAMA_LOG_WARN("Allocated tensor for layer %d\n", i);
-                    }
+                    memset(layer.di_statistics->data, 0, ggml_nbytes(layer.di_statistics));
 #endif
 
                 }
@@ -3708,11 +3700,11 @@ static void llm_load_tensors(
                     }
 #ifdef DI_STATISTICS
                     // DI: use di_statistics for the gate
-                    int64_t ne[2] = {n_embd, n_ff};
+                    int64_t ne[1] = {n_ff};
                     layer.di_statistics = ggml_new_tensor(
                         ctx,
                         GGML_TYPE_I16,
-                        2,
+                        1,
                         ne
                         );
                     layer.di_statistics->data = (uint16_t *) malloc(ggml_nbytes(layer.di_statistics));
@@ -4727,7 +4719,8 @@ static struct ggml_tensor *llm_build_ffn(
     };
 
 #ifdef DI_STATISTICS
-    if (di_statistics) {
+    // DI: Here is decided if the statistics are gathered before or with activation function
+    if (di_statistics && cur->ne[1] == 1) {
         cur->src[4] = di_statistics;
     }
 #endif
