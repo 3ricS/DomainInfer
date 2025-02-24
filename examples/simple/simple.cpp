@@ -25,11 +25,26 @@ void write_statistics_to_file(llama_model* model, std::string prompt) {
         std::vector<int> statistics = model->get_statistics(layer);
 
         file_string += std::to_string(layer) + ": ";
+        bool previous_was_zero = false;
+        int zero_counter = 0;
         for (int i = 0; i < statistics.size(); i++) {
             if (statistics[i] > 0) {
+                if (previous_was_zero && zero_counter > 3) {
+                    file_string += "(" + std::to_string(zero_counter) + "),";
+                    zero_counter = 0;
+                    previous_was_zero = false;
+                }
+                else if (previous_was_zero) {
+                    for (int i = 0; i < zero_counter; i++) {
+                        file_string += ",";
+                    }
+                    zero_counter = 0;
+                    previous_was_zero = false;
+                }
                 file_string += std::to_string(statistics[i]) + ",";
             } else {
-                file_string += ",";
+                previous_was_zero = true;
+                zero_counter++;
             }
         }
         file_string += "\n\n";
