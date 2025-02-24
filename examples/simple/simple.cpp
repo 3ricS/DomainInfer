@@ -203,7 +203,7 @@ int main(int argc, char **argv) {
                 llama_token_data_array candidates_p = {candidates.data(), candidates.size(), false};
 
                 // sample the most likely token
-                const llama_token new_token_id = llama_sample_token_greedy(ctx, &candidates_p);
+                const llama_token new_token_id = llama_sample_token(ctx, &candidates_p);
 
                 // is it an end of stream?
                 if (new_token_id == llama_token_eos(model) || n_cur == n_len) {

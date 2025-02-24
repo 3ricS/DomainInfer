@@ -1563,9 +1563,9 @@ struct llama_model {
             return std::vector<int>();
         }
 
-        std::vector<int> statistics(size, 0);
+        std::vector<int> statistics(size);
 
-        for (int i = 0; i < size; ++i) {
+        for (int i = 0; i < size; i++) {
             statistics[i] = data[i];
         }
         return statistics;
