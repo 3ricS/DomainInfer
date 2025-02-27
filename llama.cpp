@@ -1554,7 +1554,7 @@ struct llama_model {
     }
 
 #ifdef DI_STATISTICS
-    std::vector<int> llama_model::get_statistics(int layer_idx) {
+    std::vector<int> get_statistics(int layer_idx) {
         ggml_tensor* statistics_tensor = get_statistics_tensor(layer_idx);
         int32_t size = statistics_tensor->ne[0] * statistics_tensor->ne[1];
         uint16_t* data = (uint16_t*)statistics_tensor->data;
@@ -1571,18 +1571,18 @@ struct llama_model {
         return statistics;
     }
 
-    void llama_model::reset_statistics() {
+    void reset_statistics() {
         for (int i = 0; i < layers.size(); i++) {
             memset(layers[i].di_statistics->data, 0, ggml_nbytes(layers[i].di_statistics));
         }
     }
 
-    int16_t llama_model::get_statistics_length(int layer_idx) {
+    int16_t get_statistics_length(int layer_idx) {
         ggml_tensor* statistics_tensor = get_statistics_tensor(layer_idx);
         return statistics_tensor->ne[0] * statistics_tensor->ne[1];
     }
 
-    std::vector<int> llama_model::get_statistics_dimensions(int layer_idx) {
+    std::vector<int> get_statistics_dimensions(int layer_idx) {
         ggml_tensor* statistics_tensor = get_statistics_tensor(layer_idx);
         return {static_cast<int>(statistics_tensor->ne[0]), static_cast<int>(statistics_tensor->ne[1])};
     }
@@ -11166,3 +11166,72 @@ static void llama_log_callback_default(ggml_log_level level, const char *text, v
     fputs(text, stderr);
     fflush(stderr);
 }
+
+
+
+
+
+
+#ifdef DI_STATISTICS
+void write_statistics_to_file(struct llama_model* model, const char* promptText, int promptLength) {
+    std::string prompt = std::string(promptText, promptLength);
+    int n_layer = model->hparams.n_layer;
+    std::vector<int> statistics_dimensions = model->get_statistics_dimensions(0);
+
+    std::string file_string;
+    file_string += "prompt: " + prompt + "\n";
+    file_string += "layers: " + std::to_string(n_layer) + "\n";
+    file_string += "statistics size: [" + std::to_string(statistics_dimensions[0]) + ", " + std::to_string(statistics_dimensions[1]) + "]\n";
+
+
+    for (int layer = 0; layer < n_layer; layer++) {
+        LLAMA_LOG_WARN("Write layer %d\n", layer);
+        std::vector<int> statistics = model->get_statistics(layer);
+
+        file_string += std::to_string(layer) + ": ";
+        bool previous_was_zero = false;
+        long zero_counter = 0;
+        LLAMA_LOG_WARN("Writing statistics for layer %d with size %d\n", layer, statistics.size());
+        for (int i = 0; i < statistics.size(); i++) {
+            if (statistics[i] > 0) {
+                if (previous_was_zero && zero_counter > 3) {
+                    file_string += "(" + std::to_string(zero_counter) + "),";
+                    zero_counter = 0;
+                    previous_was_zero = false;
+                }
+                else if (previous_was_zero) {
+                    for (int i = 0; i < zero_counter; i++) {
+                        file_string += ",";
+                    }
+                    zero_counter = 0;
+                    previous_was_zero = false;
+                }
+                file_string += std::to_string(statistics[i]) + ",";
+            } else {
+                previous_was_zero = true;
+                zero_counter++;
+            }
+        }
+        if (previous_was_zero && zero_counter > 3) {
+            file_string += "(" + std::to_string(zero_counter) + "),";
+        }
+        else if (previous_was_zero) {
+            for (int i = 0; i < zero_counter; i++) {
+                file_string += ",";
+            }
+        }
+
+        file_string += "\n\n";
+    }
+
+    std::string filename = prompt.substr(0, 10) + ".statistics";
+    std::ofstream file("statistics/" + filename);
+    file << file_string;
+    file.close();
+    LLAMA_LOG_INFO("Wrote statistics to %s\n", filename.c_str());
+}
+
+void reset_model_statistics(struct llama_model* model) {
+    model->reset_statistics();
+}
+#endif

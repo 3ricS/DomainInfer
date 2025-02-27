@@ -1,6 +1,5 @@
 #include "common.h"
 #include "llama.h"
-#include "llama.cpp"
 
 #include <cmath>
 #include <cstdio>
@@ -9,63 +8,6 @@
 #include <iostream>
 #include <fstream>
 
-
-void write_statistics_to_file(llama_model* model, std::string prompt) {
-    int n_layer = model->hparams.n_layer;
-    std::vector<int> statistics_dimensions = model->get_statistics_dimensions(0);
-
-    std::string file_string;
-    file_string += "prompt: " + prompt + "\n";
-    file_string += "layers: " + std::to_string(n_layer) + "\n";
-    file_string += "statistics size: [" + std::to_string(statistics_dimensions[0]) + ", " + std::to_string(statistics_dimensions[1]) + "]\n";
-
-
-    for (int layer = 0; layer < n_layer; layer++) {
-        LLAMA_LOG_WARN("Write layer %d\n", layer);
-        std::vector<int> statistics = model->get_statistics(layer);
-
-        file_string += std::to_string(layer) + ": ";
-        bool previous_was_zero = false;
-        long zero_counter = 0;
-        LLAMA_LOG_WARN("Writing statistics for layer %d with size %d\n", layer, statistics.size());
-        for (int i = 0; i < statistics.size(); i++) {
-            if (statistics[i] > 0) {
-                if (previous_was_zero && zero_counter > 3) {
-                    file_string += "(" + std::to_string(zero_counter) + "),";
-                    zero_counter = 0;
-                    previous_was_zero = false;
-                }
-                else if (previous_was_zero) {
-                    for (int i = 0; i < zero_counter; i++) {
-                        file_string += ",";
-                    }
-                    zero_counter = 0;
-                    previous_was_zero = false;
-                }
-                file_string += std::to_string(statistics[i]) + ",";
-            } else {
-                previous_was_zero = true;
-                zero_counter++;
-            }
-        }
-        if (previous_was_zero && zero_counter > 3) {
-            file_string += "(" + std::to_string(zero_counter) + "),";
-        }
-        else if (previous_was_zero) {
-            for (int i = 0; i < zero_counter; i++) {
-                file_string += ",";
-            }
-        }
-
-        file_string += "\n\n";
-    }
-
-    std::string filename = prompt.substr(0, 10) + ".statistics";
-    std::ofstream file("statistics/" + filename);
-    file << file_string;
-    file.close();
-    LLAMA_LOG_INFO("Wrote statistics to %s\n", filename.c_str());
-}
 
 int main(int argc, char **argv) {
     gpt_params params;
@@ -109,7 +51,7 @@ int main(int argc, char **argv) {
     // model_params.n_gpu_layers = 99; // offload all layers to the GPU
 
     llama_model *model = llama_load_model_from_file(params.model.c_str(), model_params);
-    LLAMA_LOG_WARN("Finished loading model!\n");
+    LOG_TEE("Finished loading model!\n");
 
 
     if (model == NULL) {
@@ -129,7 +71,7 @@ int main(int argc, char **argv) {
         ctx_params.n_threads = params.n_threads;
         ctx_params.n_threads_batch = params.n_threads_batch == -1 ? params.n_threads : params.n_threads_batch;
 
-        LLAMA_LOG_WARN("Add context\n");
+        LOG_TEE("Add context\n");
         llama_context *ctx = llama_new_context_with_model(model, ctx_params);
 
         if (ctx == NULL) {
@@ -189,7 +131,7 @@ int main(int argc, char **argv) {
         const auto t_main_start = ggml_time_us();
 
 #ifdef DI_STATISTICS
-        model->reset_statistics();
+        reset_model_statistics(model);
 #endif
         while (n_cur <= n_len) {
             // sample the next token
@@ -254,8 +196,8 @@ int main(int argc, char **argv) {
         llama_free(ctx);
 
 #ifdef DI_STATISTICS
-        write_statistics_to_file(model, params.prompt);
-        model->reset_statistics();
+        write_statistics_to_file(model, params.prompt.c_str(), params.prompt.size());
+        reset_model_statistics(model);
 #endif
     }
     llama_free_model(model);

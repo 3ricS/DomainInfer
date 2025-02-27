@@ -804,4 +804,9 @@ const std::vector<std::pair<std::string, struct ggml_tensor *>> & llama_internal
 
 #endif // LLAMA_API_INTERNAL
 
+#ifdef DI_STATISTICS
+void write_statistics_to_file(struct llama_model* model, const char* promptText, int promptLength);
+void reset_model_statistics(struct llama_model* model);
+#endif
+
 #endif // LLAMA_H
