@@ -41,6 +41,21 @@ if hasattr(faulthandler, 'register') and hasattr(signal, 'SIGUSR1'):
 
 NDArray: TypeAlias = 'np.ndarray[Any, Any]'
 
+
+
+
+# DomainInfer
+BUILD_POWERINFER_MODEL = False
+
+
+
+
+
+
+
+
+
+
 DEFAULT_CONCURRENCY = 8
 #
 # data types
@@ -1230,10 +1245,11 @@ def main(args_in: list[str] | None = None) -> None:
     if not args.vocab_only:
         model_plus = load_some_model(args.model)
         params = Params.load(model_plus)
-        # DI: comment next 3 lines if predictor should be excluded
-        # mlp_predictor_plus = load_predictor_model(args.sparse_predictor)
-        # params.predictor_params = PredictorParams.load(mlp_predictor_plus)
-        # model_plus = merge_multifile_models([model_plus, mlp_predictor_plus])
+        # DI: only if predictor should be included
+        if BUILD_POWERINFER_MODEL:
+            mlp_predictor_plus = load_predictor_model(args.sparse_predictor)
+            params.predictor_params = PredictorParams.load(mlp_predictor_plus)
+            model_plus = merge_multifile_models([model_plus, mlp_predictor_plus])
     else:
         model_plus = ModelPlus(model = {}, paths = [args.model / 'dummy'], format = 'none', vocab = None)
         params = Params.load(model_plus)
@@ -1288,8 +1304,9 @@ def main(args_in: list[str] | None = None) -> None:
 
     model   = model_plus.model
     model   = convert_model_names(model, params)
-    # DI: comment next line if predictor should be excluded
-    # model   = postprocess_transpose(model)
+    # DI
+    if BUILD_POWERINFER_MODEL:
+        model   = postprocess_transpose(model)
     ftype   = pick_output_type(model, args.outtype)
     model   = convert_to_output_type(model, ftype)
     outfile = args.outfile or default_outfile(model_plus.paths, ftype)
@@ -1302,7 +1319,10 @@ def main(args_in: list[str] | None = None) -> None:
 
     # post-process: write another unique file header to distinguish from the origianl GGUF file
     with open(outfile, "r+b") as fout:
-        POWERINFER_MAGIC = int.from_bytes(b"PWRI", "little")
+        if BUILD_POWERINFER_MODEL:
+            POWERINFER_MAGIC = int.from_bytes(b"PWRI", "little")
+        else:
+            POWERINFER_MAGIC = int.from_bytes(b"GGUF", "little")
         fout.write(struct.pack("<I", POWERINFER_MAGIC))
 
 
