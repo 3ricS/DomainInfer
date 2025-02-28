@@ -37,41 +37,39 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // total length of the sequence including the prompt
-    const int n_len = 150; // params.prompt.length();
-
     // init LLM
 
     llama_backend_init(params.numa);
-
+    
     // initialize the model
-
+    
     llama_model_params model_params = llama_model_default_params();
-
+    
     // model_params.n_gpu_layers = 99; // offload all layers to the GPU
-
+    
     llama_model *model = llama_load_model_from_file(params.model.c_str(), model_params);
     LOG_TEE("Finished loading model!\n");
-
-
+    
+    
     if (model == NULL) {
         fprintf(stderr, "%s: error: unable to load model\n", __func__);
         return 1;
     }
-
+    
     while (std::getline(file, params.prompt)) {
         std::cout << params.prompt << std::endl;
+        
+        // total length of the sequence including the prompt
+        const int n_len = params.prompt.length();
 
         // initialize the context
-
         llama_context_params ctx_params = llama_context_default_params();
 
-        ctx_params.seed = 1234;
+        ctx_params.seed = 12345;
         ctx_params.n_ctx = 2048;
-        ctx_params.n_threads = params.n_threads;
+        ctx_params.n_threads = int(params.n_threads * 0.94);
         ctx_params.n_threads_batch = params.n_threads_batch == -1 ? params.n_threads : params.n_threads_batch;
 
-        LOG_TEE("Add context\n");
         llama_context *ctx = llama_new_context_with_model(model, ctx_params);
 
         if (ctx == NULL) {

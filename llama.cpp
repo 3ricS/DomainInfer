@@ -3714,7 +3714,7 @@ static void llm_load_tensors(
                         LLAMA_LOG_WARN("tensor is not allocated\n");
                     }
                     else {
-                        LLAMA_LOG_WARN("Allocated statistics tensor for layer %d\n", i);
+                        // LLAMA_LOG_WARN("Allocated statistics tensor for layer %d\n", i);
                     }
 #endif
                 }
@@ -4362,10 +4362,10 @@ static void llm_load_tensors(
     // populate `tensors_by_name`
     LLAMA_LOG_WARN("Populate tensors by name with %d tensors\n", ml.n_tensors);
     for (int i = 0; i < ml.n_tensors; ++i) {
-        LLAMA_LOG_WARN("Tensor %d %s, ", i, ml.get_tensor_name(i));
+        // LLAMA_LOG_WARN("Tensor %d %s, ", i, ml.get_tensor_name(i));
         struct ggml_tensor *cur = ggml_get_tensor(ctx, ml.get_tensor_name(i));
         if (ggml_get_name(cur)) {
-            LLAMA_LOG_WARN("Got tensor %d\n", i);
+            // LLAMA_LOG_WARN("Got tensor %d\n", i);
             model.tensors_by_name.emplace_back(ggml_get_name(cur), cur);
         }
         else {
@@ -4380,9 +4380,7 @@ static void llm_load_tensors(
     }
 #endif
 
-    LLAMA_LOG_WARN("Wants to load all data\n");
     ml.load_all_data(ctx, progress_callback, progress_callback_user_data, use_mlock ? &model.mlock_mmap : NULL);
-    LLAMA_LOG_WARN("Loaded all data\n");
 
     if (progress_callback) {
         progress_callback(1.0f, progress_callback_user_data);
@@ -11185,13 +11183,12 @@ void write_statistics_to_file(struct llama_model* model, const char* promptText,
 
 
     for (int layer = 0; layer < n_layer; layer++) {
-        LLAMA_LOG_WARN("Write layer %d\n", layer);
         std::vector<int> statistics = model->get_statistics(layer);
 
         file_string += std::to_string(layer) + ": ";
         bool previous_was_zero = false;
         long zero_counter = 0;
-        LLAMA_LOG_WARN("Writing statistics for layer %d with size %d\n", layer, statistics.size());
+        // LLAMA_LOG_WARN("Writing statistics for layer %d with size %d\n", layer, statistics.size());
         for (int i = 0; i < statistics.size(); i++) {
             if (statistics[i] > 0) {
                 if (previous_was_zero && zero_counter > 3) {
