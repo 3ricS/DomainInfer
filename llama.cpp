@@ -4434,14 +4434,14 @@ static bool llama_model_load(const std::string &fname, llama_model &model, const
 #if defined GGML_USE_CUBLAS
             llama_set_vram_budget(params.vram_budget_gb, params.main_gpu);
 #endif
-            LLAMA_LOG_WARN("Load sparse tensors!\n");
+            // LLAMA_LOG_WARN("Load sparse tensors!\n");
             llm_load_sparse_model_tensors(
                 ml, model, cparams, params.main_gpu, vram_budget_bytes, params.reset_gpu_index,
                 params.disable_gpu_index,
                 params.use_mlock, params.progress_callback, params.progress_callback_user_data
             );
         } else {
-            LLAMA_LOG_WARN("Load tensors!\n");
+            // LLAMA_LOG_WARN("Load tensors!\n");
             llm_load_tensors(
                 ml, model, params.n_gpu_layers, params.main_gpu, params.tensor_split, params.use_mlock,
                 params.progress_callback, params.progress_callback_user_data
@@ -11221,7 +11221,7 @@ void write_statistics_to_file(struct llama_model* model, const char* promptText,
         file_string += "\n\n";
     }
 
-    std::string filename = prompt.substr(0, 10) + ".statistics";
+    std::string filename = prompt.substr(0, 25) + ".statistics";
     std::ofstream file("statistics/" + filename);
     file << file_string;
     file.close();

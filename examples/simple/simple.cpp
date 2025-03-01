@@ -48,7 +48,6 @@ int main(int argc, char **argv) {
     // model_params.n_gpu_layers = 99; // offload all layers to the GPU
     
     llama_model *model = llama_load_model_from_file(params.model.c_str(), model_params);
-    LOG_TEE("Finished loading model!\n");
     
     
     if (model == NULL) {
@@ -59,31 +58,34 @@ int main(int argc, char **argv) {
     while (std::getline(file, params.prompt)) {
         std::cout << params.prompt << std::endl;
         
-        // total length of the sequence including the prompt
-        const int n_len = params.prompt.length();
-
+        
         // initialize the context
         llama_context_params ctx_params = llama_context_default_params();
-
-        ctx_params.seed = 12345;
+        
+        ctx_params.seed = 2532;
         ctx_params.n_ctx = 2048;
         ctx_params.n_threads = int(params.n_threads * 0.94);
         ctx_params.n_threads_batch = params.n_threads_batch == -1 ? params.n_threads : params.n_threads_batch;
-
+        
         llama_context *ctx = llama_new_context_with_model(model, ctx_params);
-
+        
         if (ctx == NULL) {
             fprintf(stderr, "%s: error: failed to create the llama_context\n", __func__);
             return 1;
         }
-
+        
         // tokenize the prompt
-
+        
         std::vector<llama_token> tokens_list;
         tokens_list = ::llama_tokenize(ctx, params.prompt, true);
+        
 
+        // total length of the sequence including the prompt
+        constexpr int TOKENS_TO_GENERATE = 100;
+        const int n_len = tokens_list.size() + TOKENS_TO_GENERATE;
         const int n_ctx = llama_n_ctx(ctx);
         const int n_kv_req = tokens_list.size() + (n_len - tokens_list.size());
+        
 
         LOG_TEE("\n%s: n_len = %d, n_ctx = %d, n_kv_req = %d\n", __func__, n_len, n_ctx, n_kv_req);
 
@@ -104,10 +106,17 @@ int main(int argc, char **argv) {
 
         fflush(stderr);
 
-        // create a llama_batch with size 512
+        // create a llama_batch with size 1024
         // we use this object to submit token data for decoding
 
-        llama_batch batch = llama_batch_init(512, 0, 1);
+        constexpr int BATCH_SIZE = 2048;
+        llama_batch batch = llama_batch_init(BATCH_SIZE, 0, 1);
+        if (n_len > BATCH_SIZE){
+            // batch size needs to be greater than token to process
+            // if that is not given, prompt will be skipped
+            LOG_TEE("\nBatch size for prompt is too small, prompt is skipped.\n\n");
+            continue;
+        }
 
         // evaluate the initial prompt
         for (size_t i = 0; i < tokens_list.size(); i++) {
