@@ -62,8 +62,9 @@ int main(int argc, char **argv) {
         // initialize the context
         llama_context_params ctx_params = llama_context_default_params();
         
+        constexpr int CONTEXT_SIZE = 2048;
         ctx_params.seed = 2532;
-        ctx_params.n_ctx = 2048;
+        ctx_params.n_ctx = CONTEXT_SIZE;
         ctx_params.n_threads = int(params.n_threads * 0.94);
         ctx_params.n_threads_batch = params.n_threads_batch == -1 ? params.n_threads : params.n_threads_batch;
         
@@ -86,6 +87,12 @@ int main(int argc, char **argv) {
         const int n_ctx = llama_n_ctx(ctx);
         const int n_kv_req = tokens_list.size() + (n_len - tokens_list.size());
         
+        if (int(n_len) > int(ctx_params.n_batch)){
+            // batch size needs to be greater than token to process
+            // if that is not given, prompt will be skipped
+            LOG_TEE("\nBatch size of context for prompt is too small, prompt is skipped.\n\n");
+            continue;
+        }
 
         LOG_TEE("\n%s: n_len = %d, n_ctx = %d, n_kv_req = %d\n", __func__, n_len, n_ctx, n_kv_req);
 
@@ -111,12 +118,6 @@ int main(int argc, char **argv) {
 
         constexpr int BATCH_SIZE = 2048;
         llama_batch batch = llama_batch_init(BATCH_SIZE, 0, 1);
-        if (n_len > BATCH_SIZE){
-            // batch size needs to be greater than token to process
-            // if that is not given, prompt will be skipped
-            LOG_TEE("\nBatch size for prompt is too small, prompt is skipped.\n\n");
-            continue;
-        }
 
         // evaluate the initial prompt
         for (size_t i = 0; i < tokens_list.size(); i++) {
