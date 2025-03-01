@@ -102,6 +102,7 @@ tests/test-tokenizer-1-bpe
 build-info.h
 
 statistics/*
+statistics_archive/*
 
 cmake*
 .idea/*

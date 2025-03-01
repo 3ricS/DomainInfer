@@ -12,28 +12,21 @@
 int main(int argc, char **argv) {
     gpt_params params;
 
-    if (argc == 1 || argv[1][0] == '-') {
-        printf("usage: %s MODEL_PATH [PROMPT]\n", argv[0]);
+    if (argc <= 2 || argv[1][0] == '-') {
+        printf("usage: %s MODEL_PATH DATSET_PATH\n", argv[0]);
         return 1;
     }
-
-    if (argc >= 2) {
-        params.model = argv[1];
-    }
-
+    
+    std::string dataset_filename = "";
     if (argc >= 3) {
-        params.prompt = argv[2];
+        params.model = argv[1];
+        dataset_filename = argv[2];
     }
 
-    if (params.prompt.empty()) {
-        params.prompt = "Hello my name is";
-    }
+    std::ifstream dataset_file(dataset_filename);
 
-    std::string filename = "./dataset.txt";
-    std::ifstream file(filename);
-
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not open the file " << filename << std::endl;
+    if (!dataset_file.is_open()) {
+        std::cerr << "Error: Could not open the file " << dataset_filename << std::endl;
         return 1;
     }
 
@@ -55,7 +48,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     
-    while (std::getline(file, params.prompt)) {
+    while (std::getline(dataset_file, params.prompt)) {
         std::cout << params.prompt << std::endl;
         
         
@@ -212,6 +205,6 @@ int main(int argc, char **argv) {
 
     llama_backend_free();
 
-    file.close();
+    dataset_file.close();
     return 0;
 }

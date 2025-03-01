@@ -11221,7 +11221,7 @@ void write_statistics_to_file(struct llama_model* model, const char* promptText,
         file_string += "\n\n";
     }
 
-    std::string filename = prompt.substr(0, 25) + ".statistics";
+    std::string filename = prompt.substr(0, 60) + ".statistics";
     std::ofstream file("statistics/" + filename);
     file << file_string;
     file.close();
