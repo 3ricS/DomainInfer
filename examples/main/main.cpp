@@ -231,6 +231,33 @@ int main(int argc, char ** argv) {
 
     const bool add_bos = llama_vocab_type(model) == LLAMA_VOCAB_TYPE_SPM;
     LOG("add_bos: %d\n", add_bos);
+    std::ifstream file;
+    std::string arg;
+    const std::string arg_prefix = "--";
+    for (int i = 1; i < argc; i++) {
+        arg = argv[i];
+        if (arg.compare(0, arg_prefix.size(), arg_prefix) == 0) {
+            std::replace(arg.begin(), arg.end(), '_', '-');
+        }
+
+        if (arg == "-f" || arg == "--file") {
+            file.open(argv[i+1]);
+        }
+    }
+    //std::string filename = "./dataset.txt";
+    //std::ifstream file(filename);
+
+    if (!file.is_open())
+    {
+        std::cerr << "Error: Could not open the file " << std::endl;
+        return 1;
+    }
+    struct llama_sampling_context * ctx_sampling = llama_sampling_init(sparams);
+    int counter = 0;
+    while (std::getline(file, params.prompt))
+    {
+        counter++;
+        std::cout << counter << std::endl;
 
     std::vector<llama_token> embd_inp;
 
@@ -243,14 +270,13 @@ int main(int argc, char ** argv) {
     }
 
     LOG("prompt: \"%s\"\n", log_tostr(params.prompt));
-    LOG("tokens: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
-
+    std::string tokens_str = LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp);
+    LOG("tokens: %s\n", tokens_str.empty() ? "[EMPTY]" : tokens_str.c_str());
     // Should not run without any tokens
     if (embd_inp.empty()) {
         embd_inp.push_back(llama_token_bos(model));
         LOG("embd_inp was considered empty and bos was added: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd_inp).c_str());
     }
-
     // Tokenize negative prompt
     std::vector<llama_token> guidance_inp;
     int guidance_offset = 0;
@@ -263,7 +289,6 @@ int main(int argc, char ** argv) {
 
         std::vector<llama_token> original_inp = ::llama_tokenize(ctx, params.prompt, add_bos, true);
         LOG("original_inp tokenized: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, original_inp).c_str());
-
         original_prompt_len = original_inp.size();
         guidance_offset = (int)guidance_inp.size() - original_prompt_len;
         LOG("original_prompt_len: %s", log_tostr(original_prompt_len));
@@ -274,7 +299,6 @@ int main(int argc, char ** argv) {
         LOG_TEE("%s: error: prompt is too long (%d tokens, max %d)\n", __func__, (int) embd_inp.size(), n_ctx - 4);
         return 1;
     }
-
     // debug message about similarity of saved session, if applicable
     size_t n_matching_session_tokens = 0;
     if (!session_tokens.empty()) {
@@ -441,6 +465,8 @@ int main(int argc, char ** argv) {
     bool input_echo           = true;
     bool need_to_save_session = !path_session.empty() && n_matching_session_tokens < embd_inp.size();
 
+    llama_kv_cache_clear(ctx);
+    session_tokens.clear(); 
     int n_past             = 0;
     int n_remain           = params.n_predict;
     int n_consumed         = 0;
@@ -457,7 +483,7 @@ int main(int argc, char ** argv) {
     std::vector<llama_token> embd;
     std::vector<llama_token> embd_guidance;
 
-    struct llama_sampling_context * ctx_sampling = llama_sampling_init(sparams);
+
 
     while ((n_remain != 0 && !is_antiprompt) || params.interactive) {
         // predict
@@ -579,7 +605,6 @@ int main(int argc, char ** argv) {
                 }
 
                 LOG("eval: %s\n", LOG_TOKENS_TOSTR_PRETTY(ctx, embd).c_str());
-
                 if (llama_decode(ctx, llama_batch_get_one(&embd[i], n_eval, n_past, 0))) {
                     LOG_TEE("%s : failed to eval\n", __func__);
                     return 1;
@@ -824,8 +849,10 @@ int main(int argc, char ** argv) {
     llama_print_timings(ctx);
     write_logfile(ctx, params, model, input_tokens, output_ss.str(), output_tokens);
 
-    if (ctx_guidance) { llama_free(ctx_guidance); }
-    llama_free(ctx);
+
+}
+if (ctx_guidance) { llama_free(ctx_guidance); }
+llama_free(ctx);
     llama_free_model(model);
 
     llama_sampling_free(ctx_sampling);
